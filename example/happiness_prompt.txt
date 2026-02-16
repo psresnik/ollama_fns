@@ -1,0 +1,21 @@
+
+
+You will be approaching this task as an expert in positive psychology.
+
+HAPPINESS is a state of emotional well-being that a person experiences either in
+a narrow sense, when good things happen in a specific moment, or more broadly,
+as a positive evaluation of one’s life and accomplishments overall--that is,
+subjective well-being. Happiness can be distinguished both from negative
+emotions (such as sadness, fear, and anger) and also from other positive
+emotions (such as affection, excitement, and interest).
+
+For the input you are given, produce JSON with two elements:
+
+- explanation: A brief explanation of the extent to which the input does or not provide evidence that the author was happy at the time of writing.
+
+- result:: A rating from 1 to 5 where 1 is least happy and 5 is most happy.
+
+
+
+
+
