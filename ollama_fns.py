@@ -827,13 +827,17 @@ def likert_get_probabilities_logprobs(
             prompt=prompt,
             options={
                 "temperature": 0.0,
-                "num_predict": num_predict,
+                "num_predict": num_predict
             },
             logprobs=True,
-            top_logprobs=20
+            top_logprobs=20,
+            think=False # Hardwiring no-thinking in case it's a thinking model. TO DO: make this an argument
         )
     except Exception as e:
         raise RuntimeError(f"Failed to generate response: {e}")
+
+    if verbose:
+        print(f"Response from {model}: '{response.response}'")
     
     scale_values = [str(i) for i in range(scale_min, scale_max + 1)]
     
