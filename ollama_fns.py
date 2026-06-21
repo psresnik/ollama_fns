@@ -799,11 +799,12 @@ def likert_get_probabilities_logprobs(
     multi_max_positions: int = 3,
     uniform_fallback: str = "warn",
     temperature: float = 0.0,
-    verbose: bool = False
+    verbose: bool = False,
+    num_predict: int = None,
 ) -> Tuple[Dict[str, float], Dict]:
     """
     Extract Likert probabilities using logprobs from ollama.
-    
+
     Args:
         prompt: The prompt to send to the model
         model: Ollama model name
@@ -811,21 +812,26 @@ def likert_get_probabilities_logprobs(
         extraction_method: "single_position", "multi_position", or "regex_guided"
         uniform_fallback: "true" (silent), "false" (terminate), or "warn" (default)
         verbose: Whether to show detailed output
-    
+        num_predict: Number of tokens to generate. When None, uses a method-appropriate
+            default (1 for single_position, 3 for multi_position, 15 for regex_guided).
+            Set higher to capture longer responses such as rating + justification.
+
     Returns:
         - Dictionary of probabilities for each scale value
-        - Dictionary with diagnostic information
+        - Dictionary with diagnostic information. Always includes 'full_response_text'
+          with the raw generated text from the model.
     """
-    
-    # Generate more tokens for multi-position and regex-guided extraction
-    if extraction_method == "single_position":
-        num_predict = 1
-    elif extraction_method == "multi_position":
-        num_predict = 3
-    elif extraction_method == "regex_guided":
-        num_predict = 15  # Generate longer sequence for pattern matching
-    else:
-        num_predict = 1
+
+    # Use caller-supplied token budget, or fall back to method-appropriate defaults
+    if num_predict is None:
+        if extraction_method == "single_position":
+            num_predict = 1
+        elif extraction_method == "multi_position":
+            num_predict = 3
+        elif extraction_method == "regex_guided":
+            num_predict = 15  # Generate longer sequence for pattern matching
+        else:
+            num_predict = 1
     
     try:
         response = ollama.generate(
@@ -867,10 +873,11 @@ def likert_get_probabilities_logprobs(
         choice_probs, diagnostics = likert_extract_scale_tokens_regex_guided(
             response.logprobs, scale_values, verbose=verbose
         )
-        # Add full response text to diagnostics for regex-guided method
-        diagnostics['full_response_text'] = response.response
     else:
         raise ValueError(f"Unknown extraction_method: {extraction_method}")
+
+    # Always capture the raw generated text for callers that need it (e.g. justification logging)
+    diagnostics['full_response_text'] = response.response
     
     # Renormalize probabilities, but only if we have meaningful probability mass
     total_prob = sum(choice_probs.values())
