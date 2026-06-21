@@ -80,6 +80,37 @@ weighted_score = sum(int(k) * v for k, v in probs.items())
 print(f"Weighted average: {weighted_score:.2f}")
 ```
 
+### Likert Scoring with Justification Capture
+
+To capture the model's full response text alongside the rating — for example
+when prompting for "rating then justification" — use `num_predict` to set a
+higher token budget. The raw response is always available in `diagnostics['full_response_text']`.
+
+```python
+from ollama_fns import likert_get_probabilities_logprobs
+
+prompt = (
+    "Rate the sentiment: 'This movie was fun but too long!'. "
+    "Begin your response with a space followed by the number on a 1-to-5 scale, "
+    "then provide a justification of approximately 150 tokens."
+)
+probs, diagnostics = likert_get_probabilities_logprobs(
+    prompt=prompt,
+    model="llama3.1:latest",
+    scale_min=1,
+    scale_max=5,
+    extraction_method="multi_position",
+    num_predict=150,   # override the method-driven default of 3
+)
+
+weighted_score = sum(int(k) * v for k, v in probs.items())
+print(f"Weighted average: {weighted_score:.2f}")
+print(f"Model response: {diagnostics['full_response_text']}")
+```
+
+`num_predict=None` (the default) uses method-appropriate token budgets
+(1 / 3 / 15 for `single_position` / `multi_position` / `regex_guided`).
+
 ### Memory Management Illustration
 
 This can be useful if your runs are crashing because of too much data being processed in a batch.
