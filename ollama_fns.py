@@ -62,7 +62,7 @@ def read_file(file):
         print(f"File {file} could not be found.")
 
 def process_item(instruction, model, item_ID, text, post_instruction='', input_header='\n## Input\n', 
-                verbose=False, thinking=True, enable_memory_monitoring=True, enable_garbage_collection=True):
+                verbose=False, thinking=True, enable_memory_monitoring=True, temperature=0.0, enable_garbage_collection=True):
     
     # Memory monitoring at start if enabled
     if enable_memory_monitoring and verbose:
@@ -105,7 +105,7 @@ def process_item(instruction, model, item_ID, text, post_instruction='', input_h
         messages.append({'role':'user', 'content':f"{post_instruction}"})
     
     options = {
-      'temperature': 0
+      'temperature': temperature
     }
     
     try:
@@ -147,6 +147,9 @@ def process_item(instruction, model, item_ID, text, post_instruction='', input_h
 # Process multiple items in spreadsheet infile
 def process_items(model, instructions_file, infile, post_instruction_file=None, debug=False, thinking=True):
 
+    if (debug):
+        print(f"In process_items, using model {model}")
+    
     # Use sequential counter instead of docID if none provided
     item_num = 0
     
@@ -179,6 +182,8 @@ def process_items(model, instructions_file, infile, post_instruction_file=None, 
         else:
             docID = row['docID']
         text = row['text']
+        if debug:
+            print(f"Making LLM call for item: docID = {docID}, text={text}")
         result = process_item(instruction, model, docID, text, post_instruction=post_instruction, thinking=thinking)
         if debug:
             print(f"Result of LLM call: {result}")
@@ -793,6 +798,7 @@ def likert_get_probabilities_logprobs(
     extraction_method: str = "single_position",
     multi_max_positions: int = 3,
     uniform_fallback: str = "warn",
+    temperature: float = 0.0,
     verbose: bool = False
 ) -> Tuple[Dict[str, float], Dict]:
     """
@@ -826,7 +832,7 @@ def likert_get_probabilities_logprobs(
             model=model,
             prompt=prompt,
             options={
-                "temperature": 0.0,
+                "temperature": temperature,
                 "num_predict": num_predict
             },
             logprobs=True,
