@@ -61,8 +61,8 @@ def read_file(file):
     except FileNotFoundError:
         print(f"File {file} could not be found.")
 
-def process_item(instruction, model, item_ID, text, post_instruction='', input_header='\n## Input\n', 
-                verbose=False, thinking=True, enable_memory_monitoring=True, enable_garbage_collection=True):
+def process_item(instruction, model, item_ID, text, post_instruction='', input_header='\n## Input\n',
+                verbose=False, thinking=True, enable_memory_monitoring=True, temperature=0.0, enable_garbage_collection=True):
     
     # Memory monitoring at start if enabled
     if enable_memory_monitoring and verbose:
@@ -105,7 +105,7 @@ def process_item(instruction, model, item_ID, text, post_instruction='', input_h
         messages.append({'role':'user', 'content':f"{post_instruction}"})
     
     options = {
-      'temperature': 0
+      'temperature': temperature
     }
     
     try:
@@ -147,6 +147,9 @@ def process_item(instruction, model, item_ID, text, post_instruction='', input_h
 # Process multiple items in spreadsheet infile
 def process_items(model, instructions_file, infile, post_instruction_file=None, debug=False, thinking=True):
 
+    if (debug):
+        print(f"In process_items, using model {model}")
+
     # Use sequential counter instead of docID if none provided
     item_num = 0
     
@@ -179,6 +182,8 @@ def process_items(model, instructions_file, infile, post_instruction_file=None, 
         else:
             docID = row['docID']
         text = row['text']
+        if debug:
+            print(f"Making LLM call for item: docID = {docID}, text={text}")
         result = process_item(instruction, model, docID, text, post_instruction=post_instruction, thinking=thinking)
         if debug:
             print(f"Result of LLM call: {result}")
@@ -793,12 +798,13 @@ def likert_get_probabilities_logprobs(
     extraction_method: str = "single_position",
     multi_max_positions: int = 3,
     uniform_fallback: str = "warn",
+    temperature: float = 0.0,
     verbose: bool = False,
     num_predict: Optional[int] = None
 ) -> Tuple[Dict[str, float], Dict]:
     """
     Extract Likert probabilities using logprobs from ollama.
-    
+
     Args:
         prompt: The prompt to send to the model
         model: Ollama model name
@@ -806,13 +812,17 @@ def likert_get_probabilities_logprobs(
         extraction_method: "single_position", "multi_position", or "regex_guided"
         uniform_fallback: "true" (silent), "false" (terminate), or "warn" (default)
         verbose: Whether to show detailed output
-    
+        num_predict: Number of tokens to generate. When None, uses a method-appropriate
+            default (1 for single_position, 3 for multi_position, 15 for regex_guided).
+            Set higher to capture longer responses such as rating + justification.
+
     Returns:
         - Dictionary of probabilities for each scale value
-        - Dictionary with diagnostic information
+        - Dictionary with diagnostic information. Always includes 'full_response_text'
+          with the raw generated text from the model.
     """
-    
-    # Generate more tokens for multi-position and regex-guided extraction
+
+    # Use caller-supplied token budget, or fall back to method-appropriate defaults
     if num_predict is None:
         if extraction_method == "single_position":
             num_predict = 1
@@ -828,7 +838,7 @@ def likert_get_probabilities_logprobs(
             model=model,
             prompt=prompt,
             options={
-                "temperature": 0.0,
+                "temperature": temperature,
                 "num_predict": num_predict
             },
             logprobs=True,
@@ -866,6 +876,7 @@ def likert_get_probabilities_logprobs(
     else:
         raise ValueError(f"Unknown extraction_method: {extraction_method}")
 
+    # Always capture the raw generated text for callers that need it (e.g. justification logging)
     diagnostics['full_response_text'] = response.response
     
     # Renormalize probabilities, but only if we have meaningful probability mass
