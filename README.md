@@ -173,12 +173,10 @@ pass unconditionally without first checking whether a given model supports think
 **Cold-start caveat**: a model's *first* call after being loaded (or reloaded, if it
 was evicted from GPU memory after its `keep_alive` window expired) pays GPU load time
 in addition to generation time, and that load time counts against `timeout` just like
-real generation time does. This was observed directly: `gemma2:9b`'s first call took
-76s vs. 4.5s once warm. For a large model (e.g. a 20GB+ model), cold-start load time
-alone could exceed a tightly-tuned timeout, misfiring as a "hung generation" on the
+real generation time does. For a large model (e.g. a 20GB+ model), cold-start load time
+alone can exceed a tightly-tuned timeout, misfiring as a "hung generation" on the
 very first call of a run even though nothing is actually wrong.
-
-**If you're using `timeout`, it's recommended (not required) to warm the model up
+**Therefore, if you're using `timeout`, it's recommended to warm the model up
 first** with `warm_up_model(model)`: a trivial, deliberately *untimed* chat call whose
 only job is to absorb the load-time cost before real timing starts.
 
@@ -189,18 +187,10 @@ elapsed = warm_up_model("qwen3:8b", verbose=True)  # e.g. prints "Warmed up qwen
 # ... now safe to start a batch of process_item(..., timeout=...) calls
 ```
 
-This is opt-in, not automatic: `process_item()` is called once per item in a typical
-batch loop, so there's no single natural place inside it to do a "just once per model"
-warm-up without hidden module-level state. Call `warm_up_model()` once yourself,
-before starting a batch of timed calls, only when you're actually passing `timeout`.
-Confirmed directly (`qwen3:8b`: 4.95s cold vs. 0.20s warm on a repeat call) that this
-meaningfully separates load time from generation time.
-
 **Retry-with-perturbation pattern**: since the underlying failure is often a
 non-converging generation rather than a transient error, a plain retry with the same
-parameters tends to reproduce the same failure. A more effective pattern — used in
-[paircode](https://github.com/psresnik/paircode)'s `comparisons2scores.py` — is to
-retry once with a *different* configuration that targets the failure mode directly:
+parameters tends to reproduce the same failure. A more effective pattern is to
+retry once with a *different* configuration that targets the failure mode directly: e.g.,
 thinking disabled, output capped via `num_predict`, and a different seed, with a
 shorter timeout budget than the first attempt (since the retry's whole point is to
 force a faster commit to an answer):

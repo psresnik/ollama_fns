@@ -9,6 +9,7 @@ import os
 import ollama
 import re
 import gc
+import inspect
 import numpy as np
 import sys
 from typing import Dict, Tuple, List, Callable, Optional
@@ -61,6 +62,17 @@ def read_file(file):
     except FileNotFoundError:
         print(f"File {file} could not be found.")
 
+def _client_supports_think(client):
+    """
+    Whether client.chat() accepts a native `think` kwarg. Older ollama Python
+    clients (e.g. 0.3.x) predate that parameter entirely and raise TypeError
+    if it's passed; checking the signature (rather than __version__, which
+    isn't always present) lets callers on older clients fall back to the
+    /nothink prompt-text convention instead of erroring.
+    """
+    return 'think' in inspect.signature(client.chat).parameters
+
+
 def warm_up_model(model, verbose=False):
     """
     Issues a trivial, deliberately UNTIMED chat call to load `model` into memory.
@@ -82,8 +94,11 @@ def warm_up_model(model, verbose=False):
     knowing about before a long batch run starts).
     """
     start_time = time.time()
-    ollama.chat(model=model, messages=[{'role': 'user', 'content': 'Hi'}],
-                think=False, options={'num_predict': 1})
+    warm_up_kwargs = dict(model=model, messages=[{'role': 'user', 'content': 'Hi'}],
+                           options={'num_predict': 1})
+    if _client_supports_think(ollama):
+        warm_up_kwargs['think'] = False
+    ollama.chat(**warm_up_kwargs)
     elapsed = time.time() - start_time
     if verbose:
         print(f"Warmed up {model} in {elapsed:.2f}s")
@@ -143,11 +158,6 @@ def process_item(instruction, model, item_ID, text, post_instruction='', input_h
         options['seed'] = seed
 
     chat_kwargs = dict(model=model, messages=messages, options=options)
-    if not thinking:
-        # /nothink above is not reliably honored under a tight num_predict cap
-        # (thinking tokens can still consume the whole budget); pass the
-        # native API param too so thinking=False actually disables thinking.
-        chat_kwargs['think'] = False
 
     try:
         # timeout=None preserves the previous unbounded-wait behavior (the
@@ -155,6 +165,12 @@ def process_item(instruction, model, item_ID, text, post_instruction='', input_h
         # Client so a hung/runaway generation raises rather than blocking
         # indefinitely.
         client = ollama.Client(timeout=timeout) if timeout is not None else ollama
+        if not thinking and _client_supports_think(client):
+            # /nothink above is not reliably honored under a tight num_predict cap
+            # (thinking tokens can still consume the whole budget); pass the
+            # native API param too so thinking=False actually disables thinking.
+            # Older clients (no `think` param support) fall back to /nothink alone.
+            chat_kwargs['think'] = False
         ollama_response = client.chat(**chat_kwargs)
         end_time = time.time()
         response_str = ollama_response['message']['content']
