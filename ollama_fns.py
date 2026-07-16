@@ -62,7 +62,8 @@ def read_file(file):
         print(f"File {file} could not be found.")
 
 def process_item(instruction, model, item_ID, text, post_instruction='', input_header='\n## Input\n',
-                verbose=False, thinking=True, enable_memory_monitoring=True, temperature=0.0, enable_garbage_collection=True):
+                verbose=False, thinking=True, enable_memory_monitoring=True, temperature=0.0, enable_garbage_collection=True,
+                timeout=None, num_predict=None, seed=None):
     
     # Memory monitoring at start if enabled
     if enable_memory_monitoring and verbose:
@@ -103,13 +104,29 @@ def process_item(instruction, model, item_ID, text, post_instruction='', input_h
     ]
     if post_instruction:
         messages.append({'role':'user', 'content':f"{post_instruction}"})
-    
+
     options = {
       'temperature': temperature
     }
-    
+    if num_predict is not None:
+        options['num_predict'] = num_predict
+    if seed is not None:
+        options['seed'] = seed
+
+    chat_kwargs = dict(model=model, messages=messages, options=options)
+    if not thinking:
+        # /nothink above is not reliably honored under a tight num_predict cap
+        # (thinking tokens can still consume the whole budget); pass the
+        # native API param too so thinking=False actually disables thinking.
+        chat_kwargs['think'] = False
+
     try:
-        ollama_response = ollama.chat(model=model, messages=messages, options=options)
+        # timeout=None preserves the previous unbounded-wait behavior (the
+        # ollama client's own default). A numeric timeout uses a dedicated
+        # Client so a hung/runaway generation raises rather than blocking
+        # indefinitely.
+        client = ollama.Client(timeout=timeout) if timeout is not None else ollama
+        ollama_response = client.chat(**chat_kwargs)
         end_time = time.time()
         response_str = ollama_response['message']['content']
     except Exception as e:
