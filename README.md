@@ -10,6 +10,7 @@ The code here supports:
 - **Likert Scale Analysis**: Implements best practices from [Licht et al. (2025)](https://aclanthology.org/2025.emnlp-main.1635/) and [Hamilton & Mimno (2025)](https://arxiv.org/pdf/2502.14969)
 - **Easy Batch Processing**: Processes spreadsheet data (CSV/Excel) with LLM analysis workflows
 - **Memory Management**: Built-in memory monitoring and garbage collection for large-scale analysis
+- **Timeout, Thinking Control, and Bounded-Output Retries**: `process_item()` supports a call-level `timeout`, an explicit `thinking` toggle, `num_predict` (output token cap), and `seed` — together these let a caller detect a hung/runaway generation and retry with a faster-converging configuration instead of waiting indefinitely; `warm_up_model()` is available to avoid a model's cold-start GPU load time being mistaken for a hung generation (see below)
 
 ## Installation
 
@@ -131,6 +132,93 @@ result = process_item(
 ```
 
 
+
+### Timeout and Thinking Control (for hung/runaway generations)
+
+Some models occasionally spin for a very long time without producing a usable
+response — e.g. a "thinking" model stuck in extended reasoning that never converges to
+an answer. `process_item()` accepts four parameters, usable independently or together,
+to detect and recover from this rather than blocking indefinitely:
+
+- **`timeout`** (seconds, default `None` = unbounded, matching the ollama client's own
+  default): if set, uses a dedicated `ollama.Client(timeout=timeout)` for that call, so
+  a hung generation raises rather than blocking forever. On timeout (or any other
+  client-side exception), `process_item()` does **not** raise — it catches the
+  exception internally and returns a response string of the form
+  `"LLM_ERROR: ERROR in LLM call for item <item_ID>: <ExceptionType>: <message>"`, and
+  also prints that same message unconditionally (not gated by `verbose`). Callers
+  should treat this string as a failed call — e.g. `extract_result_from_llm_json()`
+  will simply fail to find the expected key in it, which is usually the right signal
+  to act on (see the retry pattern below).
+- **`thinking`** (bool, default `True`): when set to `False`, disables the model's
+  extended-reasoning/"thinking" mode two ways at once — appending `/nothink` to the
+  instruction text, *and* passing the native `think=False` request parameter. Both are
+  used together because `/nothink` alone is not reliably honored under a tight
+  `num_predict` cap (thinking tokens can still consume the whole budget before any
+  answer is produced).
+- **`num_predict`** (int, default `None` = model/server default): caps the number of
+  output tokens, bounding worst-case latency deterministically regardless of whether
+  the model converges quickly.
+- **`seed`** (int, default `None`): for deterministic decoding, e.g. to make a retry
+  attempt reproducible given a fixed seed derived from the item being processed.
+
+**Model compatibility**: `timeout`, `num_predict`, and `seed` are generic ollama
+request options with no dependency on model architecture. `think=False` is documented
+by Ollama as being for "thinking models," but has been empirically confirmed (against
+ollama server 0.20.4, client library 0.6.2+) to be silently accepted as a no-op on
+non-thinking models (tested against `gemma2:9b` and `llama3.1:8b`) — no exception, no
+behavior change, no `thinking` field in the response. So `thinking=False` is safe to
+pass unconditionally without first checking whether a given model supports thinking.
+
+**Cold-start caveat**: a model's *first* call after being loaded (or reloaded, if it
+was evicted from GPU memory after its `keep_alive` window expired) pays GPU load time
+in addition to generation time, and that load time counts against `timeout` just like
+real generation time does. This was observed directly: `gemma2:9b`'s first call took
+76s vs. 4.5s once warm. For a large model (e.g. a 20GB+ model), cold-start load time
+alone could exceed a tightly-tuned timeout, misfiring as a "hung generation" on the
+very first call of a run even though nothing is actually wrong.
+
+**If you're using `timeout`, it's recommended (not required) to warm the model up
+first** with `warm_up_model(model)`: a trivial, deliberately *untimed* chat call whose
+only job is to absorb the load-time cost before real timing starts.
+
+```python
+from ollama_fns import warm_up_model
+
+elapsed = warm_up_model("qwen3:8b", verbose=True)  # e.g. prints "Warmed up qwen3:8b in 4.95s"
+# ... now safe to start a batch of process_item(..., timeout=...) calls
+```
+
+This is opt-in, not automatic: `process_item()` is called once per item in a typical
+batch loop, so there's no single natural place inside it to do a "just once per model"
+warm-up without hidden module-level state. Call `warm_up_model()` once yourself,
+before starting a batch of timed calls, only when you're actually passing `timeout`.
+Confirmed directly (`qwen3:8b`: 4.95s cold vs. 0.20s warm on a repeat call) that this
+meaningfully separates load time from generation time.
+
+**Retry-with-perturbation pattern**: since the underlying failure is often a
+non-converging generation rather than a transient error, a plain retry with the same
+parameters tends to reproduce the same failure. A more effective pattern — used in
+[paircode](https://github.com/psresnik/paircode)'s `comparisons2scores.py` — is to
+retry once with a *different* configuration that targets the failure mode directly:
+thinking disabled, output capped via `num_predict`, and a different seed, with a
+shorter timeout budget than the first attempt (since the retry's whole point is to
+force a faster commit to an answer):
+
+```python
+from ollama_fns import process_item, extract_result_from_llm_json
+
+response_str = process_item(instruction, model, item_ID, text, timeout=120)
+value, explanation = extract_result_from_llm_json(response_str, key='result')
+
+if value == 'unknown':  # first attempt failed (timeout, error, or unparseable output)
+    response_str = process_item(
+        instruction, model, item_ID, text,
+        timeout=60, thinking=False, num_predict=500, seed=42,
+    )
+    value, explanation = extract_result_from_llm_json(response_str, key='result')
+    # if value is still 'unknown' here, treat as a final failure and drop/flag the item
+```
 
 ## License
 

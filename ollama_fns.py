@@ -61,6 +61,35 @@ def read_file(file):
     except FileNotFoundError:
         print(f"File {file} could not be found.")
 
+def warm_up_model(model, verbose=False):
+    """
+    Issues a trivial, deliberately UNTIMED chat call to load `model` into memory.
+
+    A model's first call after being loaded (or reloaded, if evicted after its
+    keep_alive window expired) pays GPU load time in addition to generation time --
+    for a large model this can be tens of seconds, which counts against a `timeout`
+    passed to process_item() just like real generation time does, and can misfire as
+    a false "hung generation" on the very first call even though nothing is wrong.
+    Calling this once before starting a batch of timed process_item() calls avoids
+    that: recommended whenever you're passing a numeric `timeout` to process_item(),
+    not required otherwise. Not wired in automatically -- process_item() is called
+    once per item, so any automatic per-call warm-up logic would need to track which
+    models have already been warmed, and that's a caller-level (batch orchestration)
+    concern, not something this per-item function should own.
+
+    Returns the elapsed time in seconds (useful for logging/diagnostics -- an
+    unexpectedly slow warm-up call may indicate GPU/model-loading trouble worth
+    knowing about before a long batch run starts).
+    """
+    start_time = time.time()
+    ollama.chat(model=model, messages=[{'role': 'user', 'content': 'Hi'}],
+                think=False, options={'num_predict': 1})
+    elapsed = time.time() - start_time
+    if verbose:
+        print(f"Warmed up {model} in {elapsed:.2f}s")
+    return elapsed
+
+
 def process_item(instruction, model, item_ID, text, post_instruction='', input_header='\n## Input\n',
                 verbose=False, thinking=True, enable_memory_monitoring=True, temperature=0.0, enable_garbage_collection=True,
                 timeout=None, num_predict=None, seed=None):
